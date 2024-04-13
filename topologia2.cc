@@ -35,6 +35,7 @@
 #include <fstream>
 #include <filesystem>
 #include "ns3/core-module.h"
+#include "ns3/csma-module.h"
 #include "ns3/flow-monitor-module.h"
 #include "ns3/internet-module.h"
 #include "ns3/internet-apps-module.h"
@@ -50,7 +51,7 @@ using namespace ns3;
 #define SIMULATION_TIME 300.0
 #define UDP_TRANSMISSION_TIME 50.0
 #define UDP_PACKET_INTERVAL 0.1
-#define UDP_MAX_PACKETS 2000
+#define UDP_MAX_PACKETS 10000
 #define LINK_DOWN_TIME 100.0
 #define LINK_UP_TIME 200.0
 
@@ -79,6 +80,9 @@ public:
     if (currentRoutingTable != m_lastRoutingTable) {
       m_lastRoutingTable = currentRoutingTable;
       m_lastChangeTime = Simulator::Now ();
+
+      std::cout << "Tabela de roteamento do nó " << m_node->GetId () << " alterada em " << m_lastChangeTime.GetSeconds () << " s:\n";
+      std::cout << currentRoutingTable << std::endl;
     }
     Simulator::Schedule (Seconds (.1), &RoutingTableTracker::CheckRoutingTable, this);
   }
@@ -152,6 +156,22 @@ Ptr<Node> CreateNode (const std::string& name) {
 }
 
 /**
+ * Preenche o mapeamento de interfaces dos nós.
+ */
+void PopulateNodeInterfaceMap(NodeContainer nodes, NetDeviceContainer devices) {
+  for (uint32_t i = 0; i < nodes.GetN(); i++) {
+    for (uint32_t j = i + 1; j < nodes.GetN(); j++) {
+      Ptr<Node> node1 = nodes.Get(i);
+      Ptr<Node> node2 = nodes.Get(j);
+      uint32_t interface1 = node1->GetObject<Ipv4>()->GetInterfaceForDevice(devices.Get(i));
+      uint32_t interface2 = node2->GetObject<Ipv4>()->GetInterfaceForDevice(devices.Get(j));
+      nodeInterfaceMap[{node1, node2}] = interface1;
+      nodeInterfaceMap[{node2, node1}] = interface2;
+    }
+  }
+}
+
+/**
  * Derruba um enlace.
  */
 void TearDownLink (Ptr<Node> node1, Ptr<Node> node2) {
@@ -193,29 +213,6 @@ void PrintFlowStats (FlowMonitorHelper &flowmon, Ptr<FlowMonitor> monitor) {
 }
 
 /**
- * Configura um link de rede entre dois nós e atualiza o mapa de interfaces.
- * @param node1 Primeiro nó do link.
- * @param node2 Segundo nó do link.
- * @param ndc Contêiner do dispositivo de rede para o link.
- * @param ipv4 Auxiliar de endereço IPv4 para atribuir endereços IP aos nós.
- * @param networkBase A base do endereço de rede para o link.
- */
-void ConfigureNetworkLink(Ptr<Node> node1, Ptr<Node> node2, NetDeviceContainer ndc, Ipv4AddressHelper &ipv4, std::string networkBase) {
-  // Verifica se os nós e o contêiner do dispositivo de rede são válidos
-  if (node1 == nullptr || node2 == nullptr || ndc.GetN() == 0) {
-    NS_LOG_ERROR("Nó inválido ou contêiner de dispositivo de rede vazio.");
-    return;
-  }
-  // Configura a base do endereço de rede
-  ipv4.SetBase(Ipv4Address(networkBase.c_str()), Ipv4Mask("255.255.255.0"));
-  // Atribui endereços IP aos dispositivos de rede
-  Ipv4InterfaceContainer iic = ipv4.Assign(ndc);
-  // Atualiza o mapa de interfaces com as interfaces dos nós
-  nodeInterfaceMap[{node1, node2}] = iic.Get(0).first->GetInterfaceForDevice(ndc.Get(0));
-  nodeInterfaceMap[{node2, node1}] = iic.Get(1).first->GetInterfaceForDevice(ndc.Get(1));
-}
-
-/**
  * Função principal.
  */
 int main(int argc, char *argv[]) {
@@ -243,40 +240,20 @@ int main(int argc, char *argv[]) {
   Ptr<Node> r4 = CreateNode ("Router4");
   Ptr<Node> r = CreateNode ("R");
 
-  NodeContainer net1 (t, r1);  //          T -> Roteador_1
-  NodeContainer net2 (r1, r2); // Roteador_1 -> Roteador_2
-  NodeContainer net3 (r2, r);  // Roteador_2 -> R
+  NodeContainer net0(t, r1, r3);
+  NodeContainer net1(r1, r2);
+  NodeContainer net2(r2, r);
+  NodeContainer net3(r3, r4);
+  NodeContainer net4(r4, r);
 
-  NodeContainer net4 (t, r3);  //          T -> Roteador_3
-  NodeContainer net5 (r3, r4); // Roteador_3 -> Roteador_4
-  NodeContainer net6 (r4, r);  // Roteador_3 -> R
-
-  NodeContainer net7 (r1, r4); // Roteador_1 -> Roteador_4
-  NodeContainer net8 (r3, r2); // Roteador_3 -> Roteador_2
+  NodeContainer netR1R4 (r1, r4);
+  NodeContainer netR3R2 (r3, r2);
 
   NodeContainer routers (r1, r2, r3, r4);
   NodeContainer nodes (t, r);
 
   // ==============================================================================================
-  NS_LOG_INFO("** Criando canais de comunicação...");
-  PointToPointHelper p2p;
-  p2p.SetDeviceAttribute("DataRate", DataRateValue(5000000)); // 5 Mbps
-  p2p.SetChannelAttribute("Delay", TimeValue(MilliSeconds(2)));
-  NetDeviceContainer ndc1 = p2p.Install(net1);
-  NetDeviceContainer ndc2 = p2p.Install(net2);
-  nodeInterfaceMap[{net2.Get(0), net2.Get(1)}] = ndc2.Get(0)->GetIfIndex();
-  nodeInterfaceMap[{net2.Get(1), net2.Get(0)}] = ndc2.Get(1)->GetIfIndex();
-  NetDeviceContainer ndc3 = p2p.Install(net3);
-  NetDeviceContainer ndc4 = p2p.Install(net4);
-  NetDeviceContainer ndc5 = p2p.Install(net5);
-  NetDeviceContainer ndc6 = p2p.Install(net6);
-  p2p.SetDeviceAttribute("DataRate", DataRateValue(2500000)); // 2.5 Mbps
-  p2p.SetChannelAttribute("Delay", TimeValue(MilliSeconds(4)));
-  NetDeviceContainer ndc7 = p2p.Install(net7);
-  NetDeviceContainer ndc8 = p2p.Install(net8);
-
-  // ==============================================================================================
-  NS_LOG_INFO("** Instalando pilha de protocolos de internet IPv4 e roteamento...");
+  NS_LOG_INFO("** Configurando pilha de protocolos de internet IPv4 e roteamento...");
   InternetStackHelper internet;
   internet.SetIpv6StackInstall (false);
 
@@ -291,20 +268,55 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  internet.Install (routers);
   internet.Install (nodes);
+  internet.Install (routers);
 
   // ==============================================================================================
   NS_LOG_INFO("** Atribuindo endereços IPv4...");
   Ipv4AddressHelper ipv4;
-  ConfigureNetworkLink(net1.Get(0), net1.Get(1), ndc1, ipv4, "10.0.1.0");
-  ConfigureNetworkLink(net2.Get(0), net2.Get(1), ndc2, ipv4, "10.0.2.0");
-  ConfigureNetworkLink(net3.Get(0), net3.Get(1), ndc3, ipv4, "10.0.3.0");
-  ConfigureNetworkLink(net4.Get(0), net4.Get(1), ndc4, ipv4, "10.0.4.0");
-  ConfigureNetworkLink(net5.Get(0), net5.Get(1), ndc5, ipv4, "10.0.5.0");
-  ConfigureNetworkLink(net6.Get(0), net6.Get(1), ndc6, ipv4, "10.0.6.0");
-  ConfigureNetworkLink(net7.Get(0), net7.Get(1), ndc7, ipv4, "10.0.7.0");
-  ConfigureNetworkLink(net8.Get(0), net8.Get(1), ndc8, ipv4, "10.0.8.0");
+  CsmaHelper csma;
+  NetDeviceContainer devices;
+
+  // Redes com enlaces de peso 1
+  csma.SetChannelAttribute("DataRate", DataRateValue(DataRate("100Mbps")));
+  csma.SetChannelAttribute("Delay", TimeValue(NanoSeconds(6560)));
+  
+  ipv4.SetBase(Ipv4Address("10.0.0.0"), "255.255.255.0");
+  devices = csma.Install(net0);
+  PopulateNodeInterfaceMap(net0, devices);
+  ipv4.Assign(devices);
+
+  devices = csma.Install(net1);
+  PopulateNodeInterfaceMap(net1, devices);
+  ipv4.SetBase(Ipv4Address("10.0.1.0"), "255.255.255.0");
+  ipv4.Assign(devices);
+
+  devices = csma.Install(net2);
+  PopulateNodeInterfaceMap(net2, devices);
+  ipv4.SetBase(Ipv4Address("10.0.2.0"), "255.255.255.0");
+  ipv4.Assign(devices);
+
+  devices = csma.Install(net3);
+  PopulateNodeInterfaceMap(net3, devices);
+  ipv4.SetBase(Ipv4Address("10.0.3.0"), "255.255.255.0");
+  ipv4.Assign(devices);
+
+  devices = csma.Install(net4);
+  PopulateNodeInterfaceMap(net4, devices);
+  ipv4.SetBase(Ipv4Address("10.0.4.0"), "255.255.255.0");
+  ipv4.Assign(devices);
+
+  // Redes com enlaces de peso 2
+  csma.SetChannelAttribute("DataRate", DataRateValue(DataRate("10Mbps")));
+  csma.SetChannelAttribute("Delay", TimeValue(NanoSeconds(6560)));
+  devices = csma.Install(netR3R2);
+  PopulateNodeInterfaceMap(netR3R2, devices);
+  ipv4.SetBase(Ipv4Address("10.0.5.0"), "255.255.255.0");
+  ipv4.Assign(devices);
+  devices = csma.Install(netR1R4);
+  PopulateNodeInterfaceMap(netR1R4, devices);
+  ipv4.SetBase(Ipv4Address("10.0.6.0"), "255.255.255.0");
+  ipv4.Assign(devices);
 
   // ==============================================================================================
   NS_LOG_INFO("** Criando aplicações de envio de pacotes UDP...");
@@ -343,14 +355,12 @@ int main(int argc, char *argv[]) {
 
   // ==============================================================================================
   // Simula a queda e subida dos enlaces Roteador_1 -> Roteador_2 e Roteador_3 -> Roteador_4
-  Simulator::Schedule (Seconds (LINK_DOWN_TIME), &TearDownLink, r3, r2);
-  Simulator::Schedule (Seconds (LINK_UP_TIME), &UpLink, r3, r2);
+  // Simulator::Schedule (Seconds (LINK_DOWN_TIME), &TearDownLink, r1, r2);
+  // Simulator::Schedule (Seconds (LINK_UP_TIME), &UpLink, r1, r2);
 
   // ==============================================================================================
   // Configura o monitoramento da rede
-  AsciiTraceHelper ascii;
-  p2p.EnableAsciiAll (ascii.CreateFileStream (fileName + ".tr"));
-  p2p.EnablePcapAll (fileName, false);
+  csma.EnablePcapAll (fileName, false);
   FlowMonitorHelper flowmon;
   Ptr<FlowMonitor> monitor = flowmon.Install(nodes);
   Ptr<NetworkConvergenceTracker> networkTracker = Create<NetworkConvergenceTracker> (routers);
