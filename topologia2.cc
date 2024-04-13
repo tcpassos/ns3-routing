@@ -219,12 +219,10 @@ int main(int argc, char *argv[]) {
   Ptr<Node> r = CreateNode ("R");
 
   NodeContainer net0(t, r1, r3);
-  NodeContainer net1(r1, r2);
+  NodeContainer net1(r1, r2, r4);
   NodeContainer net2(r2, r);
-  NodeContainer net3(r3, r4);
+  NodeContainer net3(r3, r4, r2);
   NodeContainer net4(r4, r);
-  NodeContainer netR1R4 (r1, r4);
-  NodeContainer netR3R2 (r3, r2);
 
   NodeContainer routers (r1, r2, r3, r4);
   NodeContainer nodes (t, r);
@@ -253,7 +251,6 @@ int main(int argc, char *argv[]) {
   Ipv4AddressHelper ipv4;
   CsmaHelper csma;
 
-  // Redes com enlaces de peso 1
   csma.SetChannelAttribute("DataRate", DataRateValue(DataRate("100Mbps")));
   csma.SetChannelAttribute("Delay", TimeValue(NanoSeconds(6560)));
   
@@ -277,15 +274,11 @@ int main(int argc, char *argv[]) {
   ipv4.SetBase(Ipv4Address("10.0.4.0"), "255.255.255.0");
   ipv4.Assign(ndc4);
 
-  // Redes com enlaces de peso 2
-  csma.SetChannelAttribute("DataRate", DataRateValue(DataRate("50Mbps")));
-  csma.SetChannelAttribute("Delay", TimeValue(NanoSeconds(6560)));
-  NetDeviceContainer ndcR1R4 = csma.Install(netR1R4);
-  ipv4.SetBase(Ipv4Address("10.0.5.0"), "255.255.255.0");
-  ipv4.Assign(ndcR1R4);
-  NetDeviceContainer ndcR3R2 = csma.Install(netR3R2);
-  ipv4.SetBase(Ipv4Address("10.0.6.0"), "255.255.255.0");
-  ipv4.Assign(ndcR3R2);
+  // Enlaces com peso 2
+  Ptr<CsmaNetDevice> r1r4 = DynamicCast<CsmaNetDevice> (ndc1.Get (2));
+  r1r4->GetChannel ()->SetAttribute ("DataRate", DataRateValue (DataRate ("5Mbps")));
+  Ptr<CsmaNetDevice> r3r2 = DynamicCast<CsmaNetDevice> (ndc3.Get (2));
+  r3r2->GetChannel ()->SetAttribute ("DataRate", DataRateValue (DataRate ("5Mbps")));
 
   // ==============================================================================================
   NS_LOG_INFO("** Criando aplicações de envio de pacotes UDP...");
