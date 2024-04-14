@@ -1,15 +1,15 @@
 //    Topologia da rede:
 //
-//                +------------------------------------------------------+
-//                |                                                      |
-//   (T) ---> (Roteador_1) --x--> (Roteador_2) --> (Roteador_3) --> (Roteador_4) --> (R)
+//                +---------------------------x------------------------+
+//                |                                                    |
+//   (T) ---> (Roteador_1) ---> (Roteador_2) --> (Roteador_3) --> (Roteador_4) --> (R)
 //                |                                     /
 //                +------------------------------------+
 //
 //                Todos os enlaces possuem peso 1, exceto os enlaces entre Roteador_1 e Roteador_3 que tem peso 3
 //                                                                 e entre Roteador_1 e Roteador_4 que tem peso 4.
 //
-// Após o LINK_DOWN_TIME, o enlace entre o Roteador_1 e o Roteador_2 é derrubado.
+// Após o LINK_DOWN_TIME, o enlace entre o Roteador_1 e o Roteador_4 é derrubado.
 // Após o LINK_UP_TIME, os enlaces são restaurados.
 //
 //
