@@ -152,28 +152,36 @@ Ptr<Node> CreateNode (const std::string& name) {
 }
 
 /**
- * Gerencia os enlaces da rede.
+ * Desabilita um enlace entre dois nós de uma rede.
+ *
+ * @param devices Dispositivos de rede conectados.
  */
-class LinkManager {
-public:
-  void TearDownLink (NetDeviceContainer devices, uint32_t index1, uint32_t index2) {
-    Ptr<Node> node1 = devices.Get(index1)->GetNode();
-    Ptr<Node> node2 = devices.Get(index2)->GetNode();
-    uint32_t interface1 = node1->GetObject<Ipv4>()->GetInterfaceForDevice(devices.Get(index1));
-    uint32_t interface2 = node2->GetObject<Ipv4>()->GetInterfaceForDevice(devices.Get(index2));
-    node1->GetObject<Ipv4> ()->SetDown (interface1);
-    node2->GetObject<Ipv4> ()->SetDown (interface2);
-  }
+void TearDownLink(NetDeviceContainer devices) {
+  Ptr<NetDevice> device1 = devices.Get(0);
+  Ptr<NetDevice> device2 = devices.Get(1);
+  Ptr<Ipv4> ipv4Device1 = device1->GetNode()->GetObject<Ipv4>();
+  Ptr<Ipv4> ipv4Device2 = device2->GetNode()->GetObject<Ipv4>();
+  uint32_t interface1 = ipv4Device1->GetInterfaceForDevice(device1);
+  uint32_t interface2 = ipv4Device2->GetInterfaceForDevice(device2);
+  ipv4Device1->SetDown(interface1);
+  ipv4Device2->SetDown(interface2);
+}
 
-  void UpLink (NetDeviceContainer devices, uint32_t index1, uint32_t index2) {
-    Ptr<Node> node1 = devices.Get(index1)->GetNode();
-    Ptr<Node> node2 = devices.Get(index2)->GetNode();
-    uint32_t interface1 = node1->GetObject<Ipv4>()->GetInterfaceForDevice(devices.Get(index1));
-    uint32_t interface2 = node2->GetObject<Ipv4>()->GetInterfaceForDevice(devices.Get(index2));
-    node1->GetObject<Ipv4> ()->SetUp (interface1);
-    node2->GetObject<Ipv4> ()->SetUp (interface2);
-  }
-};
+/**
+ * Imprime as interfaces de rede.
+ *
+ * @param devices Dispositivos de rede conectados.
+ */
+void UpLink(NetDeviceContainer devices) {
+  Ptr<NetDevice> device1 = devices.Get(0);
+  Ptr<NetDevice> device2 = devices.Get(1);
+  Ptr<Ipv4> ipv4Device1 = device1->GetNode()->GetObject<Ipv4>();
+  Ptr<Ipv4> ipv4Device2 = device2->GetNode()->GetObject<Ipv4>();
+  uint32_t interface1 = ipv4Device1->GetInterfaceForDevice(device1);
+  uint32_t interface2 = ipv4Device2->GetInterfaceForDevice(device2);
+  ipv4Device1->SetUp(interface1);
+  ipv4Device2->SetUp(interface2);
+}
 
 /**
  * Imprime as estatísticas de fluxo.
@@ -222,11 +230,13 @@ int main(int argc, char *argv[]) {
   Ptr<Node> r4 = CreateNode ("Router4");
   Ptr<Node> r = CreateNode ("R");
 
-  NodeContainer net0(t, r1);
-  NodeContainer net1(r1, r2);
-  NodeContainer net2(r2, r3);
-  NodeContainer net3(r3, r4);
-  NodeContainer net4(r4, r);
+  NodeContainer netTR1(t, r1);
+  NodeContainer netR1R2(r1, r2);
+  NodeContainer netR2R3(r2, r3);
+  NodeContainer netR3R4(r3, r4);
+  NodeContainer netR4R(r4, r);
+  NodeContainer netR1R3(r1, r3);
+  NodeContainer netR1R4(r1, r4);
 
   NodeContainer routers (r1, r2, r3, r4);
   NodeContainer nodes (t, r);
@@ -237,8 +247,14 @@ int main(int argc, char *argv[]) {
   internet.SetIpv6StackInstall (false);
 
   if (routingProtocol == "rip") {
-    RipHelper ripRouting;
-    internet.SetRoutingHelper (ripRouting);
+    RipHelper ripHelper;
+    // R1 -> R4 Peso 3
+    ripHelper.SetInterfaceMetric(r1, 4, 3);
+    ripHelper.SetInterfaceMetric(r4, 3, 3);
+    // R1 -> R3 Peso 4
+    ripHelper.SetInterfaceMetric(r1, 3, 4);
+    ripHelper.SetInterfaceMetric(r3, 3, 4);
+    internet.SetRoutingHelper (ripHelper);
   } else if (routingProtocol == "olsr") {
     OlsrHelper olsrRouting;
     internet.SetRoutingHelper (olsrRouting);
@@ -247,46 +263,50 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  internet.Install (nodes);
-  internet.Install (routers);
+  internet.Install (NodeContainer(nodes, routers));
 
   // ==============================================================================================
   NS_LOG_INFO("** Atribuindo endereços IPv4...");
   Ipv4AddressHelper ipv4;
   CsmaHelper csma;
 
-  // Redes com enlaces de peso 1
+  // Peso 1
   csma.SetChannelAttribute("DataRate", DataRateValue(DataRate("100Mbps")));
   csma.SetChannelAttribute("Delay", TimeValue(NanoSeconds(6560)));
   
   ipv4.SetBase(Ipv4Address("10.0.0.0"), "255.255.255.0");
-  NetDeviceContainer ndc0 = csma.Install(net0);
-  ipv4.Assign(ndc0);
+  NetDeviceContainer ndcTR1 = csma.Install(netTR1);
+  ipv4.Assign(ndcTR1);
 
-  NetDeviceContainer ndc1 = csma.Install(net1);
+  NetDeviceContainer ndcR1R2 = csma.Install(netR1R2);
   ipv4.SetBase(Ipv4Address("10.0.1.0"), "255.255.255.0");
-  ipv4.Assign(ndc1);
+  ipv4.Assign(ndcR1R2);
 
-  NetDeviceContainer ndc2 = csma.Install(net2);
+  NetDeviceContainer ndcR2R3 = csma.Install(netR2R3);
   ipv4.SetBase(Ipv4Address("10.0.2.0"), "255.255.255.0");
-  ipv4.Assign(ndc2);
+  ipv4.Assign(ndcR2R3);
 
-  NetDeviceContainer ndc3 = csma.Install(net3);
+  NetDeviceContainer ndcR3R4 = csma.Install(netR3R4);
   ipv4.SetBase(Ipv4Address("10.0.3.0"), "255.255.255.0");
-  ipv4.Assign(ndc3);
+  ipv4.Assign(ndcR3R4);
 
-  NetDeviceContainer ndc4 = csma.Install(net4);
+  NetDeviceContainer ndcR4R = csma.Install(netR4R);
   ipv4.SetBase(Ipv4Address("10.0.4.0"), "255.255.255.0");
-  ipv4.Assign(ndc4);
+  ipv4.Assign(ndcR4R);
 
-  // // Enlace de peso 3
-  // Ptr<CsmaNetDevice> r1r3 = DynamicCast<CsmaNetDevice> (ndc1.Get (2));
-  // r1r3->GetChannel ()->SetAttribute ("DataRate", DataRateValue (DataRate ("20Mbps")));
+  // Como não é possível definir a métrica para o protocolo OLSR, afetamos a taxa de transmissão
+  
+  // Redes com enlaces de peso 2
+  csma.SetChannelAttribute("Delay", TimeValue(NanoSeconds(13120)));
+  csma.SetChannelAttribute("DataRate", DataRateValue(DataRate("5Mbps")));
+  NetDeviceContainer ndcR1R3 = csma.Install(netR1R3);
+  ipv4.SetBase(Ipv4Address("10.0.5.0"), "255.255.255.0");
+  ipv4.Assign(ndcR1R3);
 
-  // // Enlace de peso 4
-  // Ptr<CsmaNetDevice> r1r4 = DynamicCast<CsmaNetDevice> (ndc1.Get (3));
-  // r1r4->GetChannel ()->SetAttribute ("DataRate", DataRateValue (DataRate ("5Mbps")));
-
+  csma.SetChannelAttribute("DataRate", DataRateValue(DataRate("1Mbps")));
+  NetDeviceContainer ndcR1R4 = csma.Install(netR1R4);
+  ipv4.SetBase(Ipv4Address("10.0.6.0"), "255.255.255.0");
+  ipv4.Assign(ndcR1R4);
 
   // ==============================================================================================
   NS_LOG_INFO("** Criando aplicações de envio de pacotes UDP...");
@@ -324,10 +344,9 @@ int main(int argc, char *argv[]) {
   anim.UpdateNodeColor (r->GetId(), 255, 255, 0);
 
   // ==============================================================================================
-  // Simula a queda e subida do enlace Roteador_1 -> Roteador_2
-  LinkManager linkManager;
-  Simulator::Schedule (Seconds (LINK_DOWN_TIME), &LinkManager::TearDownLink, &linkManager, ndc1, 0, 1);
-  Simulator::Schedule (Seconds (LINK_UP_TIME), &LinkManager::UpLink, &linkManager, ndc1, 0, 1);
+  // Simula a queda e subida do enlace Roteador_1 -> Roteador_4
+  Simulator::Schedule (Seconds (LINK_DOWN_TIME), &TearDownLink, ndcR1R4);
+  Simulator::Schedule (Seconds (LINK_UP_TIME), &UpLink, ndcR1R4);
 
   // ==============================================================================================
   // Configura o monitoramento da rede
