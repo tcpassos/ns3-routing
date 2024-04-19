@@ -58,12 +58,16 @@ std::map<std::pair<Ptr<Node>, Ptr<Node>>, uint32_t> nodeInterfaceMap;
  */
 class RoutingTableTracker : public Object {
 public:
-  RoutingTableTracker (Ptr<Node> node) : m_tracking(true), m_node (node) {
+  RoutingTableTracker (Ptr<Node> node) : m_tracking(false), m_node (node) { }
+
+  void Start () {
+    m_tracking = true;
+    m_lastChangeTime = Simulator::Now();
     m_lastRoutingTable = GetRoutingTable ();
     Simulator::Schedule (Seconds (1.0), &RoutingTableTracker::CheckRoutingTable, this);
   }
 
-  void StopTracking () {
+  void Stop () {
     m_tracking = false;
   }
 
@@ -117,25 +121,33 @@ public:
     }
   }
 
-  void StopTracking () {
+  void Start () {
+    m_startTime = Simulator::Now();
     for (const auto& tracker : m_trackers) {
-      tracker->StopTracking();
+      tracker->Start();
+    }
+  }
+
+  void Stop () {
+    for (const auto& tracker : m_trackers) {
+      tracker->Stop();
     }
   }
 
   Time GetNetworkConvergenceTime () const {
     Time maxTime = Seconds (0);
     for (const auto& tracker : m_trackers) {
-      auto lastChangeTime = tracker->GetLastChangeTime ();
-      if (lastChangeTime > maxTime) {
-        maxTime = lastChangeTime;
+      auto convergenceTime = tracker->GetLastChangeTime ();
+      if (convergenceTime > maxTime) {
+        maxTime = convergenceTime;
       }
     }
-    return maxTime;
+    return maxTime - m_startTime;
   }
 
 private:
   std::vector<Ptr<RoutingTableTracker>> m_trackers;
+  Time m_startTime;
 };
 
 /**
@@ -216,8 +228,6 @@ void ConfigureNetworkLink(Ptr<Node> node1, Ptr<Node> node2, NetDeviceContainer n
  */
 int main(int argc, char *argv[]) {
   // LogComponentEnable("TopologySimulation", LOG_LEVEL_INFO);
-  // LogComponentEnable("UdpClient", LOG_LEVEL_INFO);
-  // LogComponentEnable("UdpServer", LOG_LEVEL_INFO);
 
   std::string routingProtocol = "rip";
 
@@ -326,16 +336,28 @@ int main(int argc, char *argv[]) {
   p2p.EnablePcapAll (fileName, false);
   FlowMonitorHelper flowmon;
   Ptr<FlowMonitor> monitor = flowmon.Install(nodes);
-  Ptr<NetworkConvergenceTracker> networkTracker = Create<NetworkConvergenceTracker> (routers);
-  // Para o monitoramento da convergência da rede antes da queda do enlace a fim de evitar falsos positivos
-  Simulator::Schedule (Seconds (LINK_DOWN_TIME), &NetworkConvergenceTracker::StopTracking, networkTracker);
+
+  Ptr<NetworkConvergenceTracker> convergenceBeforeDown = Create<NetworkConvergenceTracker> (routers);
+  Simulator::Schedule (Seconds (0.0), &NetworkConvergenceTracker::Start, convergenceBeforeDown);
+  Simulator::Schedule (Seconds (LINK_DOWN_TIME), &NetworkConvergenceTracker::Stop, convergenceBeforeDown);
+
+  Ptr<NetworkConvergenceTracker> convergenceDuringDown = Create<NetworkConvergenceTracker> (routers);
+  Simulator::Schedule (Seconds (LINK_DOWN_TIME), &NetworkConvergenceTracker::Start, convergenceDuringDown);
+  Simulator::Schedule (Seconds (LINK_UP_TIME), &NetworkConvergenceTracker::Stop, convergenceDuringDown);
+
+  Ptr<NetworkConvergenceTracker> convergenceAfterDown = Create<NetworkConvergenceTracker> (routers);
+  Simulator::Schedule (Seconds (LINK_UP_TIME), &NetworkConvergenceTracker::Start, convergenceAfterDown);
+  Simulator::Schedule (Seconds (SIMULATION_TIME), &NetworkConvergenceTracker::Stop, convergenceAfterDown);
+
 
   // ==============================================================================================
   NS_LOG_INFO("** Executando simulação...");
   Simulator::Stop (Seconds (SIMULATION_TIME));
   Simulator::Run();
 
-  std::cout << "Tempo de convergência da rede: " << networkTracker->GetNetworkConvergenceTime().GetSeconds() << " s\n";
+  std::cout << "Convergência antes da queda do enlace: " << convergenceBeforeDown->GetNetworkConvergenceTime().GetSeconds() << " s\n";
+  std::cout << "Convergência durante a queda do enlace: " << convergenceDuringDown->GetNetworkConvergenceTime().GetSeconds() << " s\n";
+  std::cout << "Convergência após a queda do enlace: " << convergenceAfterDown->GetNetworkConvergenceTime().GetSeconds() << " s\n";
   PrintFlowStats (flowmon, monitor);
 
   Simulator::Destroy();
