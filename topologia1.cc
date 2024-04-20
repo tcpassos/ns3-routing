@@ -46,7 +46,7 @@ using namespace ns3;
 #define SIMULATION_TIME 300.0
 #define UDP_TRANSMISSION_TIME 50.0
 #define UDP_PACKET_INTERVAL 0.1
-#define UDP_MAX_PACKETS 2000
+#define UDP_MAX_PACKETS 10000
 #define LINK_DOWN_TIME 100.0
 #define LINK_UP_TIME 200.0
 
@@ -160,43 +160,61 @@ Ptr<Node> CreateNode (const std::string& name) {
 }
 
 /**
- * Derruba um enlace.
+ * Desabilita um enlace entre dois nós de uma rede.
+ *
+ * @param devices Dispositivos de rede conectados.
  */
-void TearDownLink (Ptr<Node> node1, Ptr<Node> node2) {
-  uint32_t interface1 = nodeInterfaceMap[{node1, node2}];
-  uint32_t interface2 = nodeInterfaceMap[{node2, node1}];
-  node1->GetObject<Ipv4> ()->SetDown (interface1);
-  node2->GetObject<Ipv4> ()->SetDown (interface2);
+void TearDownLink(NetDeviceContainer devices) {
+  Ptr<NetDevice> device1 = devices.Get(0);
+  Ptr<NetDevice> device2 = devices.Get(1);
+  Ptr<Ipv4> ipv4Device1 = device1->GetNode()->GetObject<Ipv4>();
+  Ptr<Ipv4> ipv4Device2 = device2->GetNode()->GetObject<Ipv4>();
+  uint32_t interface1 = ipv4Device1->GetInterfaceForDevice(device1);
+  uint32_t interface2 = ipv4Device2->GetInterfaceForDevice(device2);
+  ipv4Device1->SetDown(interface1);
+  ipv4Device2->SetDown(interface2);
 }
 
 /**
- * Restaura um enlace.
+ * Imprime as interfaces de rede.
+ *
+ * @param devices Dispositivos de rede conectados.
  */
-void UpLink (Ptr<Node> node1, Ptr<Node> node2) {
-  uint32_t interface1 = nodeInterfaceMap[{node1, node2}];
-  uint32_t interface2 = nodeInterfaceMap[{node2, node1}];
-  node1->GetObject<Ipv4> ()->SetUp (interface1);
-  node2->GetObject<Ipv4> ()->SetUp (interface2);
+void UpLink(NetDeviceContainer devices) {
+  Ptr<NetDevice> device1 = devices.Get(0);
+  Ptr<NetDevice> device2 = devices.Get(1);
+  Ptr<Ipv4> ipv4Device1 = device1->GetNode()->GetObject<Ipv4>();
+  Ptr<Ipv4> ipv4Device2 = device2->GetNode()->GetObject<Ipv4>();
+  uint32_t interface1 = ipv4Device1->GetInterfaceForDevice(device1);
+  uint32_t interface2 = ipv4Device2->GetInterfaceForDevice(device2);
+  ipv4Device1->SetUp(interface1);
+  ipv4Device2->SetUp(interface2);
 }
 
 /**
  * Imprime as estatísticas de fluxo.
  */
-void PrintFlowStats (FlowMonitorHelper &flowmon, Ptr<FlowMonitor> monitor) {
-  monitor->CheckForLostPackets ();
-  Ptr<Ipv4FlowClassifier> classifier = DynamicCast<Ipv4FlowClassifier> (flowmon.GetClassifier ());
-  std::map<FlowId, FlowMonitor::FlowStats> stats = monitor->GetFlowStats ();
-  for (std::map<FlowId, FlowMonitor::FlowStats>::const_iterator i = stats.begin (); i != stats.end (); ++i) {
-    Ipv4FlowClassifier::FiveTuple t = classifier->FindFlow (i->first);
-    std::cout << std::endl << "Fluxo " << i->first  << " (" << t.sourceAddress << " -> " << t.destinationAddress << ")\n";
-    std::cout << "  Tx Packets: " << i->second.txPackets << "\n";
-    std::cout << "  Rx Packets: " << i->second.rxPackets << "\n";
-    std::cout << "  Lost Packets: " << i->second.lostPackets << "\n";
-    std::cout << "  Packet Loss Ratio: " << (double)i->second.lostPackets / i->second.txPackets << "\n";
-    std::cout << "  Average Packet Size: " << (double)i->second.txBytes / i->second.txPackets << " bytes\n";
-    std::cout << "  Throughput: " << i->second.rxBytes * 8.0 / SIMULATION_TIME / 1000 / 1000  << " Mbps\n";
-    std::cout << "  Delay: " << i->second.delaySum.GetSeconds() / i->second.rxPackets << " s\n";
-    std::cout << "  Jitter: " << i->second.jitterSum.GetSeconds() / (i->second.rxPackets - 1) << " s\n";
+void PrintFlowStats(FlowMonitorHelper* flowmonHelper, Ptr<FlowMonitor> monitor, Ptr<Node> node1, Ptr<Node> node2) {
+  std::cout << "\n=== Estatísticas de fluxo aos " << Simulator::Now().GetSeconds() << " s ===\n";
+  monitor->CheckForLostPackets();
+  Ptr<Ipv4FlowClassifier> classifier = DynamicCast<Ipv4FlowClassifier>(flowmonHelper->GetClassifier());
+  std::map<FlowId, FlowMonitor::FlowStats> stats = monitor->GetFlowStats();
+  Ipv4Address srcAddress = node1->GetObject<Ipv4>()->GetAddress(1,0).GetLocal();
+  Ipv4Address dstAddress = node2->GetObject<Ipv4>()->GetAddress(1,0).GetLocal();
+
+  for (const auto& stat : stats) {
+    Ipv4FlowClassifier::FiveTuple t = classifier->FindFlow(stat.first);
+    if (t.sourceAddress == srcAddress && t.destinationAddress == dstAddress) {
+      std::cout << "Fluxo " << stat.first << " (" << t.sourceAddress << " -> " << t.destinationAddress << ")\n"
+                << "  Tx Packets: " << stat.second.txPackets << "\n"
+                << "  Rx Packets: " << stat.second.rxPackets << "\n"
+                << "  Lost Packets: " << stat.second.lostPackets << "\n"
+                << "  Packet Loss Ratio: " << (stat.second.txPackets ? static_cast<double>(stat.second.lostPackets) / stat.second.txPackets : 0) << "\n"
+                << "  Average Packet Size: " << (stat.second.txPackets ? static_cast<double>(stat.second.txBytes) / stat.second.txPackets : 0) << " bytes\n"
+                << "  Throughput: " << stat.second.rxBytes * 8.0 / SIMULATION_TIME / 1000 / 1000 << " Mbps\n"
+                << "  Delay: " << (stat.second.rxPackets ? stat.second.delaySum.GetSeconds() / stat.second.rxPackets : 0) << " s\n"
+                << "  Jitter: " << ((stat.second.rxPackets > 1) ? stat.second.jitterSum.GetSeconds() / (stat.second.rxPackets - 1) : 0) << " s\n";
+    }
   }
 }
 
@@ -326,16 +344,18 @@ int main(int argc, char *argv[]) {
 
   // ==============================================================================================
   // Simula a queda e subida do enlace T -> Roteador 1
-  Simulator::Schedule (Seconds (LINK_DOWN_TIME), &TearDownLink, t, r1);
-  Simulator::Schedule (Seconds (LINK_UP_TIME), &UpLink, t, r1);
+  Simulator::Schedule (Seconds (LINK_DOWN_TIME), &TearDownLink, ndc1);
+  Simulator::Schedule (Seconds (LINK_UP_TIME), &UpLink, ndc1);
 
   // ==============================================================================================
   // Configura o monitoramento da rede
-  AsciiTraceHelper ascii;
-  p2p.EnableAsciiAll (ascii.CreateFileStream (fileName + ".tr"));
   p2p.EnablePcapAll (fileName, false);
+
   FlowMonitorHelper flowmon;
   Ptr<FlowMonitor> monitor = flowmon.Install(nodes);
+  Simulator::Schedule (Seconds (LINK_DOWN_TIME), &PrintFlowStats, &flowmon, monitor, t, r);
+  Simulator::Schedule (Seconds (LINK_UP_TIME), &PrintFlowStats, &flowmon, monitor, t, r);
+  Simulator::Schedule (Seconds (SIMULATION_TIME), &PrintFlowStats, &flowmon, monitor, t, r);
 
   Ptr<NetworkConvergenceTracker> convergenceBeforeDown = Create<NetworkConvergenceTracker> (routers);
   Simulator::Schedule (Seconds (0.0), &NetworkConvergenceTracker::Start, convergenceBeforeDown);
@@ -355,10 +375,10 @@ int main(int argc, char *argv[]) {
   Simulator::Stop (Seconds (SIMULATION_TIME));
   Simulator::Run();
 
-  std::cout << "Convergência antes da queda do enlace: " << convergenceBeforeDown->GetNetworkConvergenceTime().GetSeconds() << " s\n";
-  std::cout << "Convergência durante a queda do enlace: " << convergenceDuringDown->GetNetworkConvergenceTime().GetSeconds() << " s\n";
-  std::cout << "Convergência após a queda do enlace: " << convergenceAfterDown->GetNetworkConvergenceTime().GetSeconds() << " s\n";
-  PrintFlowStats (flowmon, monitor);
+  std::cout << std::endl << "Tempos de convergência do protocolo " << routingProtocol << ":\n";
+  std::cout << "Antes da queda do enlace: " << convergenceBeforeDown->GetNetworkConvergenceTime().GetSeconds() << " s\n";
+  std::cout << "Durante a queda do enlace: " << convergenceDuringDown->GetNetworkConvergenceTime().GetSeconds() << " s\n";
+  std::cout << "Após a queda do enlace: " << convergenceAfterDown->GetNetworkConvergenceTime().GetSeconds() << " s\n";
 
   Simulator::Destroy();
   NS_LOG_INFO("** Simulação finalizada.");

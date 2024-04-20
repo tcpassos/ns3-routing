@@ -198,21 +198,40 @@ void UpLink(NetDeviceContainer devices) {
 /**
  * Imprime as estatísticas de fluxo.
  */
-void PrintFlowStats (FlowMonitorHelper &flowmon, Ptr<FlowMonitor> monitor) {
-  monitor->CheckForLostPackets ();
-  Ptr<Ipv4FlowClassifier> classifier = DynamicCast<Ipv4FlowClassifier> (flowmon.GetClassifier ());
-  std::map<FlowId, FlowMonitor::FlowStats> stats = monitor->GetFlowStats ();
-  for (std::map<FlowId, FlowMonitor::FlowStats>::const_iterator i = stats.begin (); i != stats.end (); ++i) {
-    Ipv4FlowClassifier::FiveTuple t = classifier->FindFlow (i->first);
-    std::cout << std::endl << "Fluxo " << i->first  << " (" << t.sourceAddress << " -> " << t.destinationAddress << ")\n";
-    std::cout << "  Tx Packets: " << i->second.txPackets << "\n";
-    std::cout << "  Rx Packets: " << i->second.rxPackets << "\n";
-    std::cout << "  Lost Packets: " << i->second.lostPackets << "\n";
-    std::cout << "  Packet Loss Ratio: " << (double)i->second.lostPackets / i->second.txPackets << "\n";
-    std::cout << "  Average Packet Size: " << (double)i->second.txBytes / i->second.txPackets << " bytes\n";
-    std::cout << "  Throughput: " << i->second.rxBytes * 8.0 / SIMULATION_TIME / 1000 / 1000  << " Mbps\n";
-    std::cout << "  Delay: " << i->second.delaySum.GetSeconds() / i->second.rxPackets << " s\n";
-    std::cout << "  Jitter: " << i->second.jitterSum.GetSeconds() / (i->second.rxPackets - 1) << " s\n";
+void PrintFlowStats(FlowMonitorHelper* flowmonHelper, Ptr<FlowMonitor> monitor) {
+  std::cout << "\n=== Estatísticas de fluxo totais aos " << Simulator::Now().GetSeconds() << " s ===\n";
+  monitor->CheckForLostPackets();
+  Ptr<Ipv4FlowClassifier> classifier = DynamicCast<Ipv4FlowClassifier>(flowmonHelper->GetClassifier());
+  std::map<FlowId, FlowMonitor::FlowStats> stats = monitor->GetFlowStats();
+
+  uint32_t totalTxPackets = 0, totalRxPackets = 0, totalLostPackets = 0;
+  uint64_t totalTxBytes = 0, totalRxBytes = 0;
+  double totalDelaySum = 0, totalJitterSum = 0;
+  int totalFlows = 0;
+
+  for (const auto& stat : stats) {
+    totalTxPackets += stat.second.txPackets;
+    totalRxPackets += stat.second.rxPackets;
+    totalLostPackets += stat.second.lostPackets;
+    totalTxBytes += stat.second.txBytes;
+    totalRxBytes += stat.second.rxBytes;
+    totalDelaySum += stat.second.delaySum.GetSeconds();
+    totalJitterSum += stat.second.rxPackets > 1 ? stat.second.jitterSum.GetSeconds() : 0;
+    totalFlows++;
+  }
+
+  if (totalFlows > 0) {
+    std::cout << "Total de Fluxos: " << totalFlows << "\n"
+              << "Total Tx Packets: " << totalTxPackets << "\n"
+              << "Total Rx Packets: " << totalRxPackets << "\n"
+              << "Total Lost Packets: " << totalLostPackets << "\n"
+              << "Packet Loss Ratio: " << (totalTxPackets ? static_cast<double>(totalLostPackets) / totalTxPackets : 0) << "\n"
+              << "Average Packet Size: " << (totalTxPackets ? static_cast<double>(totalTxBytes) / totalTxPackets : 0) << " bytes\n"
+              << "Throughput: " << totalRxBytes * 8.0 / SIMULATION_TIME / 1000 / 1000 << " Mbps\n"
+              << "Average Delay: " << (totalRxPackets ? totalDelaySum / totalRxPackets : 0) << " s\n"
+              << "Average Jitter: " << (totalRxPackets > 1 ? totalJitterSum / (totalRxPackets - 1) : 0) << " s\n";
+  } else {
+    std::cout << "Nenhum fluxo detectado.\n";
   }
 }
 
@@ -379,9 +398,12 @@ int main(int argc, char *argv[]) {
   // ==============================================================================================
   // Configura o monitoramento da rede
   csma.EnablePcapAll (fileName, false);
+
   FlowMonitorHelper flowmon;
   Ptr<FlowMonitor> monitor = flowmon.Install(nodes);
-  Ptr<NetworkConvergenceTracker> networkTracker = Create<NetworkConvergenceTracker> (routers);
+  Simulator::Schedule (Seconds (LINK_DOWN_TIME), &PrintFlowStats, &flowmon, monitor);
+  Simulator::Schedule (Seconds (LINK_UP_TIME), &PrintFlowStats, &flowmon, monitor);
+  Simulator::Schedule (Seconds (SIMULATION_TIME), &PrintFlowStats, &flowmon, monitor);
 
   Ptr<NetworkConvergenceTracker> convergenceBeforeDown = Create<NetworkConvergenceTracker> (routers);
   Simulator::Schedule (Seconds (0.0), &NetworkConvergenceTracker::Start, convergenceBeforeDown);
@@ -400,10 +422,10 @@ int main(int argc, char *argv[]) {
   Simulator::Stop (Seconds (SIMULATION_TIME));
   Simulator::Run();
 
-  std::cout << "Convergência antes da queda do enlace: " << convergenceBeforeDown->GetNetworkConvergenceTime().GetSeconds() << " s\n";
-  std::cout << "Convergência durante a queda do enlace: " << convergenceDuringDown->GetNetworkConvergenceTime().GetSeconds() << " s\n";
-  std::cout << "Convergência após a queda do enlace: " << convergenceAfterDown->GetNetworkConvergenceTime().GetSeconds() << " s\n";
-  PrintFlowStats (flowmon, monitor);
+  std::cout << std::endl << "Tempos de convergência do protocolo " << routingProtocol << ":\n";
+  std::cout << "Antes da queda do enlace: " << convergenceBeforeDown->GetNetworkConvergenceTime().GetSeconds() << " s\n";
+  std::cout << "Durante a queda do enlace: " << convergenceDuringDown->GetNetworkConvergenceTime().GetSeconds() << " s\n";
+  std::cout << "Após a queda do enlace: " << convergenceAfterDown->GetNetworkConvergenceTime().GetSeconds() << " s\n";
 
   Simulator::Destroy();
   NS_LOG_INFO("** Simulação finalizada.");
